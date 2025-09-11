@@ -1,0 +1,79 @@
+openapi: 3.0.0
+servers:
+  - url: https://sticker.magic-lizard.ru/api
+info:
+  title: Telegram converter service
+  version: 0.0.1
+  license:
+    name: GPLv3
+    url: https://www.gnu.org/licenses/gpl-3.0.en.html
+
+paths:
+  /convert:
+    post:
+      operationId: convert_sticker
+      summary: Convert sticker
+      tags:
+        - Sticker
+      description: >
+        Convert provided telegram sticker.
+        Supported input formats: TGS, WEBM, WEBP
+        Supported output formats depends from input:
+          - TGS: PNG, JPEG, WEBP, WEBM, MP4, GIF, Lottie.JSON
+          - WEBP: PNG, JPEG
+          - WEBM: MP4, GIF, PNG, JPEG, WEBP
+
+        Convertations from video to image can be represents as: 'first frame', 'n frame', 'all frames', 'frames range'
+      security: []
+      requestBody:
+        $ref: "#/components/requestBodies/ConvertSticker"
+      responses: 
+        200:
+          description: OK
+        400:
+          description: Not OK
+
+components:
+  requestBodies:
+    ConvertSticker:
+      description: Payload for sticker convertations
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required:
+              - inputFormat
+              - outputFormat
+              - file
+            properties:
+              inputFormat:
+                type: string
+                enum: ["tgs", "webm", "webp"]
+              outputFormat:
+                description: >
+                  Select output format depends on your input format.
+                  See endpoint description for more information.
+                type: string
+                enum:
+                  ["png", "jpeg", "webp", "lottie.json", "gif", "webm", "mp4"]
+              file:
+                type: string
+                format: binary
+              resizeWidth:
+                description: >
+                  Resize width. Value 0 or null or empty value means that output dont need to resize
+                type: integer
+                maximum: 8196
+              resizeHeight:
+                description: >
+                  Resize height. Value 0 or null or empty value means that output dont need to resize
+                type: integer
+                maximum: 8196
+              frame:
+                type: string
+                enum: ['first', 'n', 'all', 'range']
+              frameIndex:
+                type: integer
+              frameOffset:
+                type: integer
