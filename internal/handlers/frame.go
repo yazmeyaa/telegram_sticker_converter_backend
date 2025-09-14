@@ -17,9 +17,15 @@ func FrameSelectHandler(rdb *redis.Client) bot.HandlerFunc {
 		userID := cb.From.ID
 		chatID := cb.Message.Message.Chat.ID
 
-		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
-			CallbackQueryID: cb.ID,
-		})
+		go func() {
+			b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+				CallbackQueryID: cb.ID,
+			})
+			b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+				ChatID:    chatID,
+				MessageID: cb.Message.Message.ID,
+			})
+		}()
 
 		vals, err := url.ParseQuery(cb.Data)
 		if err != nil {
@@ -44,10 +50,6 @@ func FrameSelectHandler(rdb *redis.Client) bot.HandlerFunc {
 			return
 		}
 
-		sendSizeKeyboard(ctx, b, chatID)
-		b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-			ChatID:    chatID,
-			MessageID: cb.Message.Message.ID,
-		})
+		go sendSizeKeyboard(ctx, b, chatID)
 	}
 }

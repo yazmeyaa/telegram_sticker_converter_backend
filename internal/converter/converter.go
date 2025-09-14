@@ -39,11 +39,19 @@ func ConvertSticker(ctx context.Context, in io.Reader, out io.Writer, state stor
 		if err != nil {
 			return err
 		}
+		s := 0
+		if state.Size == "512x512" {
+			s = 512
+		} else if state.Size == "1024x1024" {
+			s = 1024
+		}
 
 		return tgs.NewConverter().Transform(ctx, in, out, tc.TGSTransformOptions{
-			Format:   formatFromString(state.OutputFormat),
-			Frame:    frameFromString(state.FrameOption),
-			CacheKey: cacheKey,
+			Format:       formatFromString(state.OutputFormat),
+			Frame:        frameFromString(state.FrameOption),
+			CacheKey:     cacheKey,
+			ResizeWidth:  s,
+			ResizeHeight: s,
 		})
 	}
 	return nil
