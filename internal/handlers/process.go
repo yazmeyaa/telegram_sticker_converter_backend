@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,15 +16,6 @@ import (
 
 func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID int64, chatID int64) error {
 	state, err := storage.LoadState(ctx, rdb, userID)
-	fmt.Printf("Load state\nuser_id: %d\nfile_id: %s\nstage: %s\ninput_format: %s\noutput_format: %s\nframe_option: %s\nsize: %s\n",
-		userID,
-		state.FileID,
-		state.Stage,
-		state.InputFormat,
-		state.OutputFormat,
-		state.FrameOption,
-		state.Size,
-	)
 
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
@@ -45,10 +35,6 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		return fmt.Errorf("download file: %w", err)
 	}
 	defer res.Body.Close()
-
-	h := sha256.New()
-	io.Copy(h, res.Body)
-	fmt.Printf("hash: %x\n", h.Sum(nil))
 
 	pr, pw := io.Pipe()
 	go func() {
