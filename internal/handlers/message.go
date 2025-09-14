@@ -64,7 +64,7 @@ func MessageHandler(rdb *redis.Client) bot.HandlerFunc {
 
 		state := storage.UserState{
 			Stage:  "init",
-			FileID: sticker.FileUniqueID,
+			FileID: sticker.FileID,
 		}
 		_ = storage.SaveState(ctx, rdb, update.Message.From.ID, state)
 
