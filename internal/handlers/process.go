@@ -32,6 +32,7 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 	fmt.Printf("fileID: [%s]\n, fileUniqueID: [%s]\n, filePath: [%s]\n", f.FileID, f.FileUniqueID, f.FilePath)
 
 	dl := b.FileDownloadLink(f)
+	fmt.Printf("\n\nDL: -> [%s]\n\n", dl)
 	res, err := http.Get(dl)
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
