@@ -16,6 +16,16 @@ import (
 
 func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID int64, chatID int64) error {
 	state, err := storage.LoadState(ctx, rdb, userID)
+	fmt.Printf("Load state\nuser_id: %d\nfile_id: %s\nstage: %s\ninput_format: %s\noutput_format: %s\nframe_option: %s\nsize: %s\n",
+		userID,
+		state.FileID,
+		state.Stage,
+		state.InputFormat,
+		state.OutputFormat,
+		state.FrameOption,
+		state.Size,
+	)
+
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
