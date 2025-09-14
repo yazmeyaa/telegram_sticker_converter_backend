@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,10 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		return fmt.Errorf("download file: %w", err)
 	}
 	defer res.Body.Close()
+
+	h := sha256.New()
+	io.Copy(h, res.Body)
+	fmt.Printf("hash: %x\n", h.Sum(nil))
 
 	pr, pw := io.Pipe()
 	go func() {
