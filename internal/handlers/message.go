@@ -66,7 +66,7 @@ func MessageHandler(rdb *redis.Client) bot.HandlerFunc {
 			Stage:  "init",
 			FileID: sticker.FileID,
 		}
-		_ = storage.SaveState(ctx, rdb, update.Message.Chat.ID, state)
+		_ = storage.SaveState(ctx, rdb, update.Message.From.ID, state)
 
 		message := fmt.Sprintf("Got a sticker!\n\nInput format: %s\nSelect output format...", inf)
 
