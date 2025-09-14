@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 
 	"github.com/go-telegram/bot"
@@ -67,9 +68,11 @@ func MessageHandler(rdb *redis.Client) bot.HandlerFunc {
 		}
 		_ = storage.SaveState(ctx, rdb, update.Message.Chat.ID, state)
 
+		message := fmt.Sprintf("Got a sticker!\n\nInput format: %s\nSelect output format...", inf)
+
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: update.Message.Chat.ID,
-			Text:   "Select output format",
+			Text:   message,
 			ReplyMarkup: &models.InlineKeyboardMarkup{
 				InlineKeyboard: kb,
 			},

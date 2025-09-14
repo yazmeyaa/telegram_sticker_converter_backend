@@ -45,8 +45,7 @@ func SizeSelectHandler(rdb *redis.Client) bot.HandlerFunc {
 
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: chatID,
-			Text: fmt.Sprintf("Processing: %s -> %s, frame=%s, size=%s",
-				state.InputFormat, state.OutputFormat, state.FrameOption, state.Size),
+			Text:   "Processing...",
 		})
 
 		b.DeleteMessage(ctx, &bot.DeleteMessageParams{
