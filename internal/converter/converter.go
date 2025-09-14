@@ -2,6 +2,8 @@ package converter
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"io"
 
 	tc "github.com/yazmeyaa/telegram_sticker_converter"
@@ -10,6 +12,14 @@ import (
 	"github.com/yazmeyaa/telegram_sticker_converter/webp"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
 )
+
+func randomString(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b)[:n], nil
+}
 
 func ConvertSticker(ctx context.Context, in io.Reader, out io.Writer, state storage.UserState) error {
 	switch state.InputFormat {
@@ -25,9 +35,15 @@ func ConvertSticker(ctx context.Context, in io.Reader, out io.Writer, state stor
 		})
 
 	case "tgs":
+		cacheKey, err := randomString(16)
+		if err != nil {
+			return err
+		}
+
 		return tgs.NewConverter().Transform(ctx, in, out, tc.TGSTransformOptions{
-			Format: formatFromString(state.OutputFormat),
-			Frame:  frameFromString(state.FrameOption),
+			Format:   formatFromString(state.OutputFormat),
+			Frame:    frameFromString(state.FrameOption),
+			CacheKey: cacheKey,
 		})
 	}
 	return nil

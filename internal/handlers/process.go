@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +15,14 @@ import (
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/converter"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
 )
+
+func randomString(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b)[:n], nil
+}
 
 func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID int64, chatID int64) error {
 	state, err := storage.LoadState(ctx, rdb, userID)
@@ -29,10 +39,8 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		return fmt.Errorf("get file: %w", err)
 	}
 
-	fmt.Printf("fileID: [%s]\n, fileUniqueID: [%s]\n, filePath: [%s]\n", f.FileID, f.FileUniqueID, f.FilePath)
-
 	dl := b.FileDownloadLink(f)
-	fmt.Printf("\n\nDL: -> [%s]\n\n", dl)
+
 	res, err := http.Get(dl)
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
@@ -40,15 +48,17 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 	defer res.Body.Close()
 
 	pr, pw := io.Pipe()
-	go func() {
+	go func(r io.Reader, w io.Writer) {
 		defer pw.Close()
 		if err := converter.ConvertSticker(ctx, res.Body, pw, *state); err != nil {
 			fmt.Fprintf(os.Stderr, "convert error: %s", err)
+			pw.CloseWithError(err)
 		}
-	}()
+	}(res.Body, pw)
 
 	var ext string
-	if (state.OutputFormat == "png" || state.OutputFormat == "jpeg" || state.OutputFormat == "webp") && (state.FrameOption == "all" || state.FrameOption == "range") {
+	if (state.OutputFormat == "png" || state.OutputFormat == "jpeg" || state.OutputFormat == "webp") &&
+		(state.FrameOption == "all" || state.FrameOption == "range") {
 		ext = "zip"
 	} else if state.OutputFormat == "lottie" {
 		ext = "json"
@@ -56,12 +66,21 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		ext = state.OutputFormat
 	}
 
+	filename, err := randomString(16)
+	if err != nil {
+		return err
+	}
+
 	_, err = b.SendDocument(ctx, &bot.SendDocumentParams{
 		ChatID: chatID,
 		Document: &models.InputFileUpload{
-			Filename: "converted." + ext,
+			Filename: filename + "." + ext,
 			Data:     pr,
 		},
 	})
+	if err != nil {
+		return err
+	}
+
 	return err
 }

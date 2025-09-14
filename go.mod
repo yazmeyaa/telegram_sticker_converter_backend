@@ -6,7 +6,7 @@ require (
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/go-telegram/bot v1.17.0
 	github.com/oapi-codegen/runtime v1.1.2
-	github.com/yazmeyaa/telegram_sticker_converter v1.0.3
+	github.com/yazmeyaa/telegram_sticker_converter v1.0.4
 	gopkg.in/yaml.v3 v3.0.1
 )
 

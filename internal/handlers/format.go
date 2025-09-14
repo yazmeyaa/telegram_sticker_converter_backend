@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -32,7 +33,8 @@ func FormatSelectHandler(rdb *redis.Client) bot.HandlerFunc {
 
 		state, _ := storage.LoadState(ctx, rdb, userID)
 		if state == nil {
-			state = &storage.UserState{}
+			fmt.Fprintf(os.Stderr, "Cannot find state. Kill process.\n")
+			return
 		}
 		state.Stage = "format_select"
 		state.InputFormat = inf
@@ -59,6 +61,15 @@ func FormatSelectHandler(rdb *redis.Client) bot.HandlerFunc {
 				Text:        "Select frame option",
 				ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
 			})
+		} else if outf == "lottie" {
+			go func() {
+				if err := ProcessSticker(ctx, b, rdb, userID, chatID); err != nil {
+					b.SendMessage(ctx, &bot.SendMessageParams{
+						ChatID: chatID,
+						Text:   fmt.Sprintf("❌ Conversion failed: %s", err),
+					})
+				}
+			}()
 		} else {
 			sendSizeKeyboard(ctx, b, chatID)
 		}
