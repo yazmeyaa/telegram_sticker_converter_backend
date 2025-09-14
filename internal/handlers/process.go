@@ -46,6 +46,8 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 	var ext string
 	if (state.OutputFormat == "png" || state.OutputFormat == "jpeg" || state.OutputFormat == "webp") && (state.FrameOption == "all" || state.FrameOption == "range") {
 		ext = "zip"
+	} else if state.OutputFormat == "lottie" {
+		ext = "json"
 	} else {
 		ext = state.OutputFormat
 	}
