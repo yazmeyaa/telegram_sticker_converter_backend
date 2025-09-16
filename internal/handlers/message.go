@@ -13,10 +13,31 @@ import (
 
 func MessageHandler(rdb *redis.Client) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		if update.Message == nil || update.Message.Sticker == nil {
+		if update.Message == nil || (update.Message.Sticker == nil && len(update.Message.Entities) == 0) {
 			return
 		}
-		sticker := update.Message.Sticker
+		var sticker *models.Sticker
+		if update.Message.Sticker != nil {
+			sticker = update.Message.Sticker
+		} else {
+			for _, e := range update.Message.Entities {
+				if e.Type != models.MessageEntityTypeCustomEmoji {
+					continue
+				}
+
+				s, err := b.GetCustomEmojiStickers(ctx, &bot.GetCustomEmojiStickersParams{
+					CustomEmojiIDs: []string{e.CustomEmojiID},
+				})
+				if err != nil {
+					// handle err
+					return
+				}
+				if len(s) < 1 {
+					return
+				}
+				sticker = s[0]
+			}
+		}
 
 		var inf string
 		var kb [][]models.InlineKeyboardButton
