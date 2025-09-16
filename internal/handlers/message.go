@@ -49,7 +49,6 @@ func MessageHandler(rdb *redis.Client) bot.HandlerFunc {
 				},
 				{
 					{Text: "GIF", CallbackData: formatToKey(inf, "gif")},
-					{Text: "WEBM", CallbackData: formatToKey(inf, "webm")},
 				},
 			}
 		default:
