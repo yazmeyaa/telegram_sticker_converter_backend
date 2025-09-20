@@ -29,11 +29,11 @@ func main() {
 	}
 
 	b, err := bot.New(token, opts...)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, handlers.HandleStartCommand)
-
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, handlers.HandleStartCommand)
 
 	b.Start(ctx)
 }
