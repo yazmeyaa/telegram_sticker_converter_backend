@@ -16,6 +16,10 @@ func main() {
 	defer cancel()
 
 	rdb := redis.NewClient(&redis.Options{})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatal("Redis connection failed:", err)
+	}
+
 	token := os.Getenv("BOT_TOKEN")
 	if token == "" {
 		log.Fatal("BOT_TOKEN not set")
