@@ -104,7 +104,8 @@ func ProcessSticker(ctx context.Context, bot *telego.Bot, rdb *redis.Client, use
 				"error", err,
 				"action", "process_sticker",
 			)
-			return fmt.Errorf("open local file: %w", err)
+			// Не показываем путь пользователю (содержит токен)
+			return fmt.Errorf("failed to access sticker file on server")
 		}
 		fileReader = localFile
 	} else {
