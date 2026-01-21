@@ -52,14 +52,19 @@ func main() {
 		},
 	}
 
+	// Для отладки - выводим URL который будет использоваться
+	appLogger.Info("Using Telegram API URL", "url", telegramAPIURL)
+
 	opts := []bot.Option{
 		bot.WithDefaultHandler(handlers.MessageHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=format_select", bot.MatchTypePrefix, handlers.FormatSelectHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=frame_select", bot.MatchTypePrefix, handlers.FrameSelectHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=size_select", bot.MatchTypePrefix, handlers.SizeSelectHandler(rdb, appLogger)),
 		bot.WithServerURL(telegramAPIURL),
-		bot.WithHTTPClient(30*time.Second, httpClient), // pollTimeout 30 секунд, HTTP клиент с увеличенными таймаутами
+		// Временно убираем кастомный HTTP клиент для отладки
+		// bot.WithHTTPClient(30*time.Second, httpClient),
 	}
+	_ = httpClient // чтобы не было ошибки unused variable
 
 	b, err := bot.New(token, opts...)
 	if err != nil {
