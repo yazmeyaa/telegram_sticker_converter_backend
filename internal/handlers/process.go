@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mymmrac/telego"
@@ -83,29 +84,60 @@ func ProcessSticker(ctx context.Context, bot *telego.Bot, rdb *redis.Client, use
 		"action", "process_sticker",
 	)
 
-	// Формируем URL для скачивания файла
-	dl := bot.FileDownloadURL(f.FilePath)
-
-	// HTTP клиент с таймаутом для загрузки файла
-	httpClient := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-
-	res, err := httpClient.Get(dl)
-	if err != nil {
-		logger.Error("Failed to download file",
+	// Получаем reader для файла
+	// При локальном Bot API file_path может быть абсолютным путём к файлу
+	var fileReader io.ReadCloser
+	if strings.HasPrefix(f.FilePath, "/") {
+		// Локальный Bot API - читаем файл напрямую с диска
+		logger.Info("Reading file from local path",
 			"user_id", userID,
 			"chat_id", chatID,
-			"file_id", state.FileID,
-			"download_link", dl,
-			"error", err,
+			"file_path", f.FilePath,
 			"action", "process_sticker",
 		)
-		return fmt.Errorf("download file: %w", err)
-	}
-	defer res.Body.Close()
+		localFile, err := os.Open(f.FilePath)
+		if err != nil {
+			logger.Error("Failed to open local file",
+				"user_id", userID,
+				"chat_id", chatID,
+				"file_path", f.FilePath,
+				"error", err,
+				"action", "process_sticker",
+			)
+			return fmt.Errorf("open local file: %w", err)
+		}
+		fileReader = localFile
+	} else {
+		// Обычный Bot API - скачиваем по HTTP
+		dl := bot.FileDownloadURL(f.FilePath)
+		logger.Info("Downloading file via HTTP",
+			"user_id", userID,
+			"chat_id", chatID,
+			"download_link", dl,
+			"action", "process_sticker",
+		)
 
-	logger.Info("File downloaded, starting conversion",
+		httpClient := &http.Client{
+			Timeout: 5 * time.Minute,
+		}
+
+		res, err := httpClient.Get(dl)
+		if err != nil {
+			logger.Error("Failed to download file",
+				"user_id", userID,
+				"chat_id", chatID,
+				"file_id", state.FileID,
+				"download_link", dl,
+				"error", err,
+				"action", "process_sticker",
+			)
+			return fmt.Errorf("download file: %w", err)
+		}
+		fileReader = res.Body
+	}
+	defer fileReader.Close()
+
+	logger.Info("File ready, starting conversion",
 		"user_id", userID,
 		"chat_id", chatID,
 		"file_id", state.FileID,
@@ -127,7 +159,7 @@ func ProcessSticker(ctx context.Context, bot *telego.Bot, rdb *redis.Client, use
 	defer os.Remove(tmpFileName)
 	defer tmpFile.Close()
 
-	if err := converter.ConvertSticker(ctx, res.Body, tmpFile, *state); err != nil {
+	if err := converter.ConvertSticker(ctx, fileReader, tmpFile, *state); err != nil {
 		logger.Error("Conversion error",
 			"user_id", userID,
 			"chat_id", chatID,
