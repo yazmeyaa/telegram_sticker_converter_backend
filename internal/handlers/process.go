@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/converter"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
@@ -25,7 +25,7 @@ func randomString(n int) (string, error) {
 	return hex.EncodeToString(b)[:n], nil
 }
 
-func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID int64, chatID int64, logger *slog.Logger) error {
+func ProcessSticker(ctx context.Context, bot *telego.Bot, rdb *redis.Client, userID int64, chatID int64, logger Logger) error {
 	logger.Info("Processing sticker started",
 		"user_id", userID,
 		"chat_id", chatID,
@@ -62,7 +62,7 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		"action", "process_sticker",
 	)
 
-	f, err := b.GetFile(ctx, &bot.GetFileParams{FileID: state.FileID})
+	f, err := bot.GetFile(ctx, &telego.GetFileParams{FileID: state.FileID})
 	if err != nil {
 		logger.Error("Failed to get file from Telegram",
 			"user_id", userID,
@@ -83,7 +83,8 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		"action", "process_sticker",
 	)
 
-	dl := b.FileDownloadLink(f)
+	// Формируем URL для скачивания файла
+	dl := bot.FileDownloadURL(f.FilePath)
 
 	// HTTP клиент с таймаутом для загрузки файла
 	httpClient := &http.Client{
@@ -111,22 +112,47 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		"action", "process_sticker",
 	)
 
-	pr, pw := io.Pipe()
-	go func(r io.Reader, w io.Writer) {
-		defer pw.Close()
-		if err := converter.ConvertSticker(ctx, res.Body, pw, *state); err != nil {
-			logger.Error("Conversion error",
-				"user_id", userID,
-				"chat_id", chatID,
-				"file_id", state.FileID,
-				"input_format", state.InputFormat,
-				"output_format", state.OutputFormat,
-				"error", err,
-				"action", "process_sticker",
-			)
-			pw.CloseWithError(err)
-		}
-	}(res.Body, pw)
+	// Создаем временный файл для результата
+	tmpFile, err := os.CreateTemp("", "sticker_result_*")
+	if err != nil {
+		logger.Error("Failed to create temp file",
+			"user_id", userID,
+			"chat_id", chatID,
+			"error", err,
+			"action", "process_sticker",
+		)
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpFileName := tmpFile.Name()
+	defer os.Remove(tmpFileName)
+	defer tmpFile.Close()
+
+	if err := converter.ConvertSticker(ctx, res.Body, tmpFile, *state); err != nil {
+		logger.Error("Conversion error",
+			"user_id", userID,
+			"chat_id", chatID,
+			"file_id", state.FileID,
+			"input_format", state.InputFormat,
+			"output_format", state.OutputFormat,
+			"error", err,
+			"action", "process_sticker",
+		)
+		return fmt.Errorf("convert sticker: %w", err)
+	}
+
+	// Закрываем файл и открываем заново для чтения
+	tmpFile.Close()
+	tmpFile, err = os.Open(tmpFileName)
+	if err != nil {
+		return fmt.Errorf("reopen temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	// Получаем размер файла
+	stat, err := tmpFile.Stat()
+	if err != nil {
+		return fmt.Errorf("stat temp file: %w", err)
+	}
 
 	var ext string
 	if (state.OutputFormat == "png" || state.OutputFormat == "jpeg" || state.OutputFormat == "webp") &&
@@ -154,39 +180,24 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		"chat_id", chatID,
 		"file_id", state.FileID,
 		"filename", filename+"."+ext,
+		"file_size", stat.Size(),
 		"action", "process_sticker",
 	)
 
-	// Создаем контекст с увеличенным таймаутом для отправки больших файлов
-	// Особенно важно для "all frames" + "original size"
-	sendCtx := ctx
-	isLargeFile := (state.FrameOption == "all" || state.FrameOption == "range") && state.Size == "original"
-	if isLargeFile {
-		// Для больших файлов (all frames + original size) увеличиваем таймаут до 15 минут
-		var sendCancel context.CancelFunc
-		sendCtx, sendCancel = context.WithTimeout(ctx, 15*time.Minute)
-		defer sendCancel()
-		logger.Info("Using extended timeout for large file",
-			"user_id", userID,
-			"chat_id", chatID,
-			"frame_option", state.FrameOption,
-			"size", state.Size,
-			"action", "process_sticker",
-		)
-	} else {
-		// Для обычных файлов используем таймаут 5 минут
-		var sendCancel context.CancelFunc
-		sendCtx, sendCancel = context.WithTimeout(ctx, 5*time.Minute)
-		defer sendCancel()
+	// Читаем файл в память для отправки
+	data, err := io.ReadAll(tmpFile)
+	if err != nil {
+		return fmt.Errorf("read temp file: %w", err)
 	}
 
-	_, err = b.SendDocument(sendCtx, &bot.SendDocumentParams{
-		ChatID: chatID,
-		Document: &models.InputFileUpload{
-			Filename: filename + "." + ext,
-			Data:     pr,
-		},
+	doc := tu.Document(tu.ID(chatID), telego.InputFile{
+		File: tu.NameReader(
+			&bytesReaderCloser{data: data},
+			filename+"."+ext,
+		),
 	})
+
+	_, err = bot.SendDocument(ctx, doc)
 	if err != nil {
 		logger.Error("Failed to send document",
 			"user_id", userID,
@@ -209,5 +220,24 @@ func ProcessSticker(ctx context.Context, b *bot.Bot, rdb *redis.Client, userID i
 		"action", "process_sticker",
 	)
 
+	return nil
+}
+
+// bytesReaderCloser реализует io.ReadCloser для []byte
+type bytesReaderCloser struct {
+	data   []byte
+	offset int
+}
+
+func (b *bytesReaderCloser) Read(p []byte) (n int, err error) {
+	if b.offset >= len(b.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, b.data[b.offset:])
+	b.offset += n
+	return n, nil
+}
+
+func (b *bytesReaderCloser) Close() error {
 	return nil
 }

@@ -3,21 +3,29 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
 )
 
-func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+func FormatSelectHandler(rdb *redis.Client, logger Logger) th.Handler {
+	return func(c *th.Context, update telego.Update) error {
 		cb := update.CallbackQuery
+		if cb == nil {
+			return nil
+		}
+
+		bot := c.Bot()
+		ctx := c.Context()
+
 		userID := cb.From.ID
-		chatID := cb.Message.Message.Chat.ID
+		chatID := cb.Message.GetChat().ID
+		msgID := cb.Message.GetMessageID()
 		username := cb.From.Username
 
 		logger.Info("Format selection callback received",
@@ -29,7 +37,7 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 		)
 
 		// Немедленно отвечаем на callback и удаляем сообщение
-		_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		err := bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: cb.ID,
 		})
 		if err != nil {
@@ -41,15 +49,15 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 			)
 		}
 
-		_, err = b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-			ChatID:    chatID,
-			MessageID: cb.Message.Message.ID,
+		err = bot.DeleteMessage(ctx, &telego.DeleteMessageParams{
+			ChatID:    tu.ID(chatID),
+			MessageID: msgID,
 		})
 		if err != nil {
 			logger.Error("Failed to delete message",
 				"user_id", userID,
 				"chat_id", chatID,
-				"message_id", cb.Message.Message.ID,
+				"message_id", msgID,
 				"error", err,
 				"action", "format_select",
 			)
@@ -64,7 +72,7 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 				"error", err,
 				"action", "format_select",
 			)
-			return
+			return err
 		}
 
 		inf := vals.Get("in")
@@ -78,7 +86,7 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 				"error", err,
 				"action", "format_select",
 			)
-			return
+			return err
 		}
 		state.Stage = "format_select"
 		state.InputFormat = inf
@@ -91,7 +99,7 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 				"error", err,
 				"action", "format_select",
 			)
-			return
+			return err
 		}
 
 		logger.Info("Format selected",
@@ -121,22 +129,20 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 		}
 
 		if isAnimated && isImageOut {
-			kb := [][]models.InlineKeyboardButton{
-				{
-					{Text: "🎬 First frame", CallbackData: "action=frame_select&frame=first"},
-					{Text: "🎞️ All frames", CallbackData: "action=frame_select&frame=all"},
-				},
-			}
+			kb := tu.InlineKeyboard(
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("🎬 First frame").WithCallbackData("action=frame_select&frame=first"),
+					tu.InlineKeyboardButton("🎞️ All frames").WithCallbackData("action=frame_select&frame=all"),
+				),
+			)
 			message := fmt.Sprintf("✅ Format selected: *%s*\n\n📥 Input: %s\n📤 Output: %s\n\n🎬 Choose which frames to extract:",
 				escapeMarkdownV2(outputFormatName),
 				escapeMarkdownV2(strings.ToUpper(inf)),
 				escapeMarkdownV2(outputFormatName))
-			_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID:      chatID,
-				Text:        message,
-				ParseMode:   models.ParseModeMarkdown,
-				ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
-			})
+
+			_, err := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), message).
+				WithParseMode(telego.ModeMarkdownV2).
+				WithReplyMarkup(kb))
 			if err != nil {
 				logger.Error("Failed to send frame selection message",
 					"user_id", userID,
@@ -144,23 +150,21 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 					"error", err,
 					"action", "format_select",
 				)
-			} else {
-				logger.Info("Frame selection message sent",
-					"user_id", userID,
-					"chat_id", chatID,
-					"action", "format_select",
-				)
+				return err
 			}
+			logger.Info("Frame selection message sent",
+				"user_id", userID,
+				"chat_id", chatID,
+				"action", "format_select",
+			)
 		} else if outf == "lottie" {
 			message := fmt.Sprintf("✅ Format selected: *%s*\n\n📥 Input: %s\n📤 Output: %s\n\n⏳ Processing your sticker\\.\\.\\.",
 				escapeMarkdownV2(outputFormatName),
 				escapeMarkdownV2(strings.ToUpper(inf)),
 				escapeMarkdownV2(outputFormatName))
-			_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID:    chatID,
-				Text:      message,
-				ParseMode: models.ParseModeMarkdown,
-			})
+
+			_, err := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), message).
+				WithParseMode(telego.ModeMarkdownV2))
 			if err != nil {
 				logger.Error("Failed to send processing message",
 					"user_id", userID,
@@ -178,18 +182,17 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 				"action", "format_select",
 			)
 			go func() {
-				if err := ProcessSticker(ctx, b, rdb, userID, chatID, logger); err != nil {
+				bgCtx := context.Background()
+				if err := ProcessSticker(bgCtx, bot, rdb, userID, chatID, logger); err != nil {
 					logger.Error("Sticker processing failed",
 						"user_id", userID,
 						"chat_id", chatID,
 						"error", err,
 						"action", "process_sticker",
 					)
-					b.SendMessage(ctx, &bot.SendMessageParams{
-						ChatID:    chatID,
-						Text:      fmt.Sprintf("❌ *Conversion failed*\n\n%s", escapeMarkdownV2(err.Error())),
-						ParseMode: models.ParseModeMarkdown,
-					})
+					bot.SendMessage(bgCtx, tu.Message(tu.ID(chatID),
+						fmt.Sprintf("❌ *Conversion failed*\n\n%s", escapeMarkdownV2(err.Error()))).
+						WithParseMode(telego.ModeMarkdownV2))
 				}
 			}()
 		} else {
@@ -198,8 +201,8 @@ func FormatSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc
 				"chat_id", chatID,
 				"action", "format_select",
 			)
-			sendSizeKeyboard(ctx, b, chatID, logger, inf, outputFormatName)
+			sendSizeKeyboard(ctx, bot, chatID, logger, inf, outputFormatName)
 		}
-
+		return nil
 	}
 }

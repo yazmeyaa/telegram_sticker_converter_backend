@@ -1,43 +1,53 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
 )
 
-func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		if update.Message == nil || (update.Message.Sticker == nil && len(update.Message.Entities) == 0) {
-			return
+func MessageHandler(rdb *redis.Client, logger Logger) th.Handler {
+	return func(c *th.Context, update telego.Update) error {
+		msg := update.Message
+		if msg == nil {
+			return nil
 		}
 
-		userID := update.Message.From.ID
-		chatID := update.Message.Chat.ID
-		username := update.Message.From.Username
+		bot := c.Bot()
+		ctx := c.Context()
 
-		var sticker *models.Sticker
-		if update.Message.Sticker != nil {
-			sticker = update.Message.Sticker
+		userID := msg.From.ID
+		chatID := msg.Chat.ID
+		username := msg.From.Username
+
+		var stickerFileID string
+		var isAnimated, isVideo bool
+
+		if msg.Sticker != nil {
+			sticker := msg.Sticker
+			stickerFileID = sticker.FileID
+			isAnimated = sticker.IsAnimated
+			isVideo = sticker.IsVideo
+
 			logger.Info("Received sticker",
 				"user_id", userID,
 				"chat_id", chatID,
 				"username", username,
-				"sticker_file_id", sticker.FileID,
-				"sticker_is_animated", sticker.IsAnimated,
-				"sticker_is_video", sticker.IsVideo,
+				"sticker_file_id", stickerFileID,
+				"sticker_is_animated", isAnimated,
+				"sticker_is_video", isVideo,
 				"action", "sticker_received",
 			)
-		} else {
-			for _, e := range update.Message.Entities {
-				if e.Type != models.MessageEntityTypeCustomEmoji {
+		} else if msg.Entities != nil {
+			// Проверяем custom emoji
+			for _, e := range msg.Entities {
+				if e.Type != telego.EntityTypeCustomEmoji || e.CustomEmojiID == "" {
 					continue
 				}
 
@@ -49,7 +59,8 @@ func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 					"action", "custom_emoji_received",
 				)
 
-				s, err := b.GetCustomEmojiStickers(ctx, &bot.GetCustomEmojiStickersParams{
+				// Получаем стикер через API
+				stickers, err := bot.GetCustomEmojiStickers(ctx, &telego.GetCustomEmojiStickersParams{
 					CustomEmojiIDs: []string{e.CustomEmojiID},
 				})
 				if err != nil {
@@ -60,77 +71,86 @@ func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 						"error", err,
 						"action", "custom_emoji_received",
 					)
-					return
+					return err
 				}
-				if len(s) < 1 {
+				if len(stickers) < 1 {
 					logger.Warn("No stickers returned for custom emoji",
 						"user_id", userID,
 						"chat_id", chatID,
 						"custom_emoji_id", e.CustomEmojiID,
 						"action", "custom_emoji_received",
 					)
-					return
+					return nil
 				}
-				sticker = s[0]
+				sticker := stickers[0]
+				stickerFileID = sticker.FileID
+				isAnimated = sticker.IsAnimated
+				isVideo = sticker.IsVideo
+
 				logger.Info("Custom emoji sticker retrieved",
 					"user_id", userID,
 					"chat_id", chatID,
-					"sticker_file_id", sticker.FileID,
-					"sticker_is_animated", sticker.IsAnimated,
-					"sticker_is_video", sticker.IsVideo,
+					"sticker_file_id", stickerFileID,
+					"sticker_is_animated", isAnimated,
+					"sticker_is_video", isVideo,
 					"action", "custom_emoji_received",
 				)
+				break
 			}
 		}
 
+		if stickerFileID == "" {
+			return nil
+		}
+
 		var inf string
-		var kb [][]models.InlineKeyboardButton
+		var kb *telego.InlineKeyboardMarkup
 
 		switch {
-		case sticker.IsAnimated:
+		case isAnimated:
 			inf = "tgs"
-			kb = [][]models.InlineKeyboardButton{
-				{
-					{Text: "GIF", CallbackData: formatToKey(inf, "gif")},
-					{Text: "WEBM", CallbackData: formatToKey(inf, "webm")},
-					{Text: "MP4", CallbackData: formatToKey(inf, "mp4")},
-				},
-				{
-					{Text: "PNG", CallbackData: formatToKey(inf, "png")},
-					{Text: "JPEG", CallbackData: formatToKey(inf, "jpeg")},
-					{Text: "WEBP", CallbackData: formatToKey(inf, "webp")},
-				},
-				{
-					{Text: "Lottie.JSON", CallbackData: formatToKey(inf, "lottie")},
-				},
-			}
-		case sticker.IsVideo:
+			kb = tu.InlineKeyboard(
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("GIF").WithCallbackData(formatToKey(inf, "gif")),
+					tu.InlineKeyboardButton("WEBM").WithCallbackData(formatToKey(inf, "webm")),
+					tu.InlineKeyboardButton("MP4").WithCallbackData(formatToKey(inf, "mp4")),
+				),
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("PNG").WithCallbackData(formatToKey(inf, "png")),
+					tu.InlineKeyboardButton("JPEG").WithCallbackData(formatToKey(inf, "jpeg")),
+					tu.InlineKeyboardButton("WEBP").WithCallbackData(formatToKey(inf, "webp")),
+				),
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("Lottie.JSON").WithCallbackData(formatToKey(inf, "lottie")),
+				),
+			)
+		case isVideo:
 			inf = "webm"
-			kb = [][]models.InlineKeyboardButton{
-				{
-					{Text: "PNG", CallbackData: formatToKey(inf, "png")},
-					{Text: "JPEG", CallbackData: formatToKey(inf, "jpeg")},
-					{Text: "WEBP", CallbackData: formatToKey(inf, "webp")},
-				},
-				{
-					{Text: "GIF", CallbackData: formatToKey(inf, "gif")},
-				},
-			}
+			kb = tu.InlineKeyboard(
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("PNG").WithCallbackData(formatToKey(inf, "png")),
+					tu.InlineKeyboardButton("JPEG").WithCallbackData(formatToKey(inf, "jpeg")),
+					tu.InlineKeyboardButton("WEBP").WithCallbackData(formatToKey(inf, "webp")),
+				),
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("GIF").WithCallbackData(formatToKey(inf, "gif")),
+				),
+			)
 		default:
 			inf = "webp"
-			kb = [][]models.InlineKeyboardButton{
-				{
-					{Text: "PNG", CallbackData: formatToKey(inf, "png")},
-					{Text: "JPEG", CallbackData: formatToKey(inf, "jpeg")},
-				},
-			}
+			kb = tu.InlineKeyboard(
+				tu.InlineKeyboardRow(
+					tu.InlineKeyboardButton("PNG").WithCallbackData(formatToKey(inf, "png")),
+					tu.InlineKeyboardButton("JPEG").WithCallbackData(formatToKey(inf, "jpeg")),
+				),
+			)
 		}
 
 		rdb.Del(ctx, fmt.Sprintf("user_state:%d", userID))
 
 		state := storage.UserState{
 			Stage:  "init",
-			FileID: sticker.FileID,
+			FileID: stickerFileID,
 		}
 
 		if err := storage.SaveState(ctx, rdb, userID, state); err != nil {
@@ -146,7 +166,7 @@ func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 			"user_id", userID,
 			"chat_id", chatID,
 			"input_format", inf,
-			"sticker_file_id", sticker.FileID,
+			"sticker_file_id", stickerFileID,
 			"action", "sticker_received",
 		)
 
@@ -163,14 +183,9 @@ func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 		message := fmt.Sprintf("🎨 *Sticker received\\!*\n\n📥 Input format: *%s*\n\n📤 Select output format:",
 			escapeMarkdownV2(inputFormatName))
 
-		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    chatID,
-			Text:      message,
-			ParseMode: models.ParseModeMarkdown,
-			ReplyMarkup: &models.InlineKeyboardMarkup{
-				InlineKeyboard: kb,
-			},
-		})
+		_, err := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), message).
+			WithParseMode(telego.ModeMarkdownV2).
+			WithReplyMarkup(kb))
 		if err != nil {
 			logger.Error("Failed to send format selection message",
 				"user_id", userID,
@@ -178,14 +193,15 @@ func MessageHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 				"error", err,
 				"action", "sticker_received",
 			)
-		} else {
-			logger.Info("Format selection message sent",
-				"user_id", userID,
-				"chat_id", chatID,
-				"input_format", inf,
-				"action", "sticker_received",
-			)
+			return err
 		}
+		logger.Info("Format selection message sent",
+			"user_id", userID,
+			"chat_id", chatID,
+			"input_format", inf,
+			"action", "sticker_received",
+		)
+		return nil
 	}
 }
 

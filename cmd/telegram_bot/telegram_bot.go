@@ -1,45 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
-	"github.com/go-telegram/bot"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/handlers"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/logger"
 )
-
-// bufferingTransport обёртка которая буферизирует тело запроса
-// чтобы избежать Transfer-Encoding: chunked (локальный Bot API его не поддерживает)
-type bufferingTransport struct {
-	transport http.RoundTripper
-}
-
-func (b *bufferingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Если есть тело запроса и нет Content-Length, буферизируем его
-	if req.Body != nil && req.ContentLength <= 0 {
-		bodyBytes, err := io.ReadAll(req.Body)
-		req.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read request body: %w", err)
-		}
-
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		req.ContentLength = int64(len(bodyBytes))
-		// Убираем Transfer-Encoding, так как теперь есть Content-Length
-		req.TransferEncoding = nil
-	}
-
-	return b.transport.RoundTrip(req)
-}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -64,41 +38,80 @@ func main() {
 
 	// Определение URL Telegram API
 	telegramAPIURL := os.Getenv("TELEGRAM_API_URL")
-	if telegramAPIURL == "" {
-		telegramAPIURL = "https://api.telegram.org"
+
+	var botOptions []telego.BotOption
+	if telegramAPIURL != "" {
+		appLogger.Info("Using custom Telegram API URL", "url", telegramAPIURL)
+		botOptions = append(botOptions, telego.WithAPIServer(telegramAPIURL))
 	}
 
-	// Настройка HTTP клиента с увеличенными таймаутами для больших файлов
-	// bufferingTransport нужен чтобы убрать Transfer-Encoding: chunked,
-	// который не поддерживается локальным Telegram Bot API
-	httpClient := &http.Client{
-		Timeout: 10 * time.Minute, // 10 минут для загрузки больших файлов
-		Transport: &bufferingTransport{
-			transport: &http.Transport{
-				ResponseHeaderTimeout: 5 * time.Minute,
-				TLSHandshakeTimeout:   30 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		},
-	}
-
-	opts := []bot.Option{
-		bot.WithDefaultHandler(handlers.MessageHandler(rdb, appLogger)),
-		bot.WithCallbackQueryDataHandler("action=format_select", bot.MatchTypePrefix, handlers.FormatSelectHandler(rdb, appLogger)),
-		bot.WithCallbackQueryDataHandler("action=frame_select", bot.MatchTypePrefix, handlers.FrameSelectHandler(rdb, appLogger)),
-		bot.WithCallbackQueryDataHandler("action=size_select", bot.MatchTypePrefix, handlers.SizeSelectHandler(rdb, appLogger)),
-		bot.WithServerURL(telegramAPIURL),
-		bot.WithHTTPClient(30*time.Second, httpClient), // pollTimeout 30 секунд, HTTP клиент с увеличенными таймаутами
-	}
-
-	b, err := bot.New(token, opts...)
+	bot, err := telego.NewBot(token, botOptions...)
 	if err != nil {
 		appLogger.Error("Failed to create bot", "error", err)
 		log.Fatal(err)
 	}
 
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, handlers.HandleStartCommand(appLogger))
+	me, err := bot.GetMe(ctx)
+	if err != nil {
+		appLogger.Error("Failed to get bot info", "error", err)
+		log.Fatal(err)
+	}
+
+	appLogger.Info("Telegram bot authorized", "username", me.Username)
+
+	updates, err := bot.UpdatesViaLongPolling(ctx, nil)
+	if err != nil {
+		appLogger.Error("Failed to start long polling", "error", err)
+		log.Fatal(err)
+	}
+
+	bh, err := th.NewBotHandler(bot, updates)
+	if err != nil {
+		appLogger.Error("Failed to create bot handler", "error", err)
+		log.Fatal(err)
+	}
+	defer bh.Stop()
+
+	// Команда /start
+	bh.Handle(handlers.HandleStartCommand(appLogger), th.CommandEqual("start"))
+
+	// Callback query handlers
+	bh.Handle(handlers.FormatSelectHandler(rdb, appLogger), th.CallbackDataContains("action=format_select"))
+	bh.Handle(handlers.FrameSelectHandler(rdb, appLogger), th.CallbackDataContains("action=frame_select"))
+	bh.Handle(handlers.SizeSelectHandler(rdb, appLogger), th.CallbackDataContains("action=size_select"))
+
+	// Стикеры
+	bh.Handle(handlers.MessageHandler(rdb, appLogger), th.AnyMessage(), stickerOrCustomEmojiPredicate())
 
 	appLogger.Info("Telegram bot started", "telegram_api_url", telegramAPIURL)
-	b.Start(ctx)
+
+	go bh.Start()
+
+	<-ctx.Done()
+	appLogger.Info("Shutting down bot")
 }
+
+// stickerOrCustomEmojiPredicate возвращает предикат для фильтрации стикеров и custom emoji
+func stickerOrCustomEmojiPredicate() th.Predicate {
+	return func(ctx context.Context, update telego.Update) bool {
+		if update.Message == nil {
+			return false
+		}
+		// Стикер
+		if update.Message.Sticker != nil {
+			return true
+		}
+		// Custom emoji
+		if update.Message.Entities != nil {
+			for _, e := range update.Message.Entities {
+				if e.Type == telego.EntityTypeCustomEmoji {
+					return true
+				}
+			}
+		}
+		return false
+	}
+}
+
+// Для совместимости
+var _ = tu.ID

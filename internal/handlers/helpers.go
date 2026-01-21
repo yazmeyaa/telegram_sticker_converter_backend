@@ -6,9 +6,16 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	tu "github.com/mymmrac/telego/telegoutil"
 )
+
+// Logger interface для логирования
+type Logger interface {
+	Info(msg string, args ...any)
+	Error(msg string, args ...any)
+	Warn(msg string, args ...any)
+}
 
 // escapeMarkdownV2 экранирует специальные символы для Telegram MarkdownV2
 // Специальные символы: _ * [ ] ( ) ~ ` > # + - = | { } . !
@@ -24,16 +31,16 @@ func escapeMarkdownV2(text string) string {
 	return result
 }
 
-func sendSizeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, logger *slog.Logger, inputFormat, outputFormat string, frameOption ...string) {
-	kb := [][]models.InlineKeyboardButton{
-		{
-			{Text: "📐 512×512", CallbackData: "action=size_select&size=512x512"},
-			{Text: "📐 1024×1024", CallbackData: "action=size_select&size=1024x1024"},
-		},
-		{
-			{Text: "🖼️ Original size", CallbackData: "action=size_select&size=original"},
-		},
-	}
+func sendSizeKeyboard(ctx context.Context, bot *telego.Bot, chatID int64, logger Logger, inputFormat, outputFormat string, frameOption ...string) {
+	kb := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📐 512×512").WithCallbackData("action=size_select&size=512x512"),
+			tu.InlineKeyboardButton("📐 1024×1024").WithCallbackData("action=size_select&size=1024x1024"),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("🖼️ Original size").WithCallbackData("action=size_select&size=original"),
+		),
+	)
 
 	frameInfo := ""
 	if len(frameOption) > 0 && frameOption[0] != "" {
@@ -44,14 +51,10 @@ func sendSizeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, logger *slo
 		escapeMarkdownV2(outputFormat),
 		escapeMarkdownV2(strings.ToUpper(inputFormat)),
 		frameInfo)
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:    chatID,
-		Text:      message,
-		ParseMode: models.ParseModeMarkdown,
-		ReplyMarkup: &models.InlineKeyboardMarkup{
-			InlineKeyboard: kb,
-		},
-	})
+
+	_, err := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), message).
+		WithParseMode(telego.ModeMarkdownV2).
+		WithReplyMarkup(kb))
 	if err != nil {
 		logger.Error("Failed to send size selection keyboard",
 			"chat_id", chatID,
@@ -65,3 +68,6 @@ func sendSizeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, logger *slo
 		)
 	}
 }
+
+// Ensure *slog.Logger implements Logger interface
+var _ Logger = (*slog.Logger)(nil)

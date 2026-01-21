@@ -3,21 +3,29 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/storage"
 )
 
-func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+func SizeSelectHandler(rdb *redis.Client, logger Logger) th.Handler {
+	return func(c *th.Context, update telego.Update) error {
 		cb := update.CallbackQuery
+		if cb == nil {
+			return nil
+		}
+
+		bot := c.Bot()
+		ctx := c.Context()
+
 		userID := cb.From.ID
-		chatID := cb.Message.Message.Chat.ID
+		chatID := cb.Message.GetChat().ID
+		msgID := cb.Message.GetMessageID()
 		username := cb.From.Username
 
 		logger.Info("Size selection callback received",
@@ -29,7 +37,7 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 		)
 
 		// Немедленно отвечаем на callback и удаляем сообщение
-		_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		err := bot.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: cb.ID,
 		})
 		if err != nil {
@@ -41,15 +49,15 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 			)
 		}
 
-		_, err = b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-			ChatID:    chatID,
-			MessageID: cb.Message.Message.ID,
+		err = bot.DeleteMessage(ctx, &telego.DeleteMessageParams{
+			ChatID:    tu.ID(chatID),
+			MessageID: msgID,
 		})
 		if err != nil {
 			logger.Error("Failed to delete message",
 				"user_id", userID,
 				"chat_id", chatID,
-				"message_id", cb.Message.Message.ID,
+				"message_id", msgID,
 				"error", err,
 				"action", "size_select",
 			)
@@ -64,7 +72,7 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 				"error", err,
 				"action", "size_select",
 			)
-			return
+			return err
 		}
 		size := vals.Get("size")
 		if size == "" {
@@ -74,7 +82,7 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 				"callback_data", cb.Data,
 				"action", "size_select",
 			)
-			return
+			return nil
 		}
 
 		state, err := storage.LoadState(ctx, rdb, userID)
@@ -97,7 +105,7 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 				"error", err,
 				"action", "size_select",
 			)
-			return
+			return err
 		}
 
 		state, err = storage.LoadState(ctx, rdb, userID)
@@ -126,8 +134,6 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 		sizeDisplayName := size
 		if size == "original" {
 			sizeDisplayName = "Original size"
-		} else {
-			sizeDisplayName = size
 		}
 
 		frameInfo := ""
@@ -136,7 +142,6 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 		} else if state.FrameOption == "first" {
 			frameInfo = "\n🎬 Frame: First frame"
 		}
-		// frameInfo не содержит пользовательских данных, экранирование не требуется
 
 		// Определяем, будет ли создан большой zip файл
 		isLargeZipFile := (state.FrameOption == "all" || state.FrameOption == "range") &&
@@ -165,11 +170,9 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 			escapeMarkdownV2(sizeDisplayName),
 			frameInfo,
 			processingNote)
-		_, err = b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    chatID,
-			Text:      message,
-			ParseMode: models.ParseModeMarkdown,
-		})
+
+		_, err = bot.SendMessage(ctx, tu.Message(tu.ID(chatID), message).
+			WithParseMode(telego.ModeMarkdownV2))
 		if err != nil {
 			logger.Error("Failed to send processing message",
 				"user_id", userID,
@@ -190,19 +193,19 @@ func SizeSelectHandler(rdb *redis.Client, logger *slog.Logger) bot.HandlerFunc {
 		)
 
 		go func() {
-			if err := ProcessSticker(ctx, b, rdb, userID, chatID, logger); err != nil {
+			bgCtx := context.Background()
+			if err := ProcessSticker(bgCtx, bot, rdb, userID, chatID, logger); err != nil {
 				logger.Error("Sticker processing failed",
 					"user_id", userID,
 					"chat_id", chatID,
 					"error", err,
 					"action", "process_sticker",
 				)
-				b.SendMessage(ctx, &bot.SendMessageParams{
-					ChatID:    chatID,
-					Text:      fmt.Sprintf("❌ Conversion failed: %s", escapeMarkdownV2(err.Error())),
-					ParseMode: models.ParseModeMarkdown,
-				})
+				bot.SendMessage(bgCtx, tu.Message(tu.ID(chatID),
+					fmt.Sprintf("❌ Conversion failed: %s", escapeMarkdownV2(err.Error()))).
+					WithParseMode(telego.ModeMarkdownV2))
 			}
 		}()
+		return nil
 	}
 }

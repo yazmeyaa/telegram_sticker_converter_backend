@@ -1,18 +1,24 @@
 package handlers
 
 import (
-	"context"
-	"log/slog"
-
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 )
 
-func HandleStartCommand(logger *slog.Logger) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		userID := update.Message.From.ID
-		chatID := update.Message.Chat.ID
-		username := update.Message.From.Username
+func HandleStartCommand(logger Logger) th.Handler {
+	return func(c *th.Context, update telego.Update) error {
+		msg := update.Message
+		if msg == nil {
+			return nil
+		}
+
+		bot := c.Bot()
+		ctx := c.Context()
+
+		userID := msg.From.ID
+		chatID := msg.Chat.ID
+		username := msg.From.Username
 
 		logger.Info("User started bot",
 			"user_id", userID,
@@ -35,10 +41,7 @@ Usage is easy:
 Duckcoin channel 👉 @duckcoin 
 Quack-Quack.`
 
-		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: chatID,
-			Text:   welcomeMsg,
-		})
+		_, err := bot.SendMessage(ctx, tu.Message(tu.ID(chatID), welcomeMsg))
 		if err != nil {
 			logger.Error("Failed to send welcome message",
 				"user_id", userID,
@@ -46,12 +49,13 @@ Quack-Quack.`
 				"error", err,
 				"action", "start_command",
 			)
-		} else {
-			logger.Info("Welcome message sent",
-				"user_id", userID,
-				"chat_id", chatID,
-				"action", "start_command",
-			)
+			return err
 		}
+		logger.Info("Welcome message sent",
+			"user_id", userID,
+			"chat_id", chatID,
+			"action", "start_command",
+		)
+		return nil
 	}
 }
