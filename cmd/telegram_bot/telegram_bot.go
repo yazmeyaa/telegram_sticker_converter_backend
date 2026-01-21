@@ -36,6 +36,12 @@ func main() {
 		log.Fatal("BOT_TOKEN not set")
 	}
 
+	// Определение URL Telegram API
+	telegramAPIURL := os.Getenv("TELEGRAM_API_URL")
+	if telegramAPIURL == "" {
+		telegramAPIURL = "https://api.telegram.org"
+	}
+
 	// Настройка HTTP клиента с увеличенными таймаутами для больших файлов
 	httpClient := &http.Client{
 		Timeout: 10 * time.Minute, // 10 минут для загрузки больших файлов
@@ -51,6 +57,7 @@ func main() {
 		bot.WithCallbackQueryDataHandler("action=format_select", bot.MatchTypePrefix, handlers.FormatSelectHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=frame_select", bot.MatchTypePrefix, handlers.FrameSelectHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=size_select", bot.MatchTypePrefix, handlers.SizeSelectHandler(rdb, appLogger)),
+		bot.WithServerURL(telegramAPIURL),
 		bot.WithHTTPClient(30*time.Second, httpClient), // pollTimeout 30 секунд, HTTP клиент с увеличенными таймаутами
 	}
 
