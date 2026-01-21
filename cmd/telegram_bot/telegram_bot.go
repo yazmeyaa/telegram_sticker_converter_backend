@@ -69,6 +69,6 @@ func main() {
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, handlers.HandleStartCommand(appLogger))
 
-	appLogger.Info("Telegram bot started")
+	appLogger.Info("Telegram bot started", "telegram_api_url", telegramAPIURL)
 	b.Start(ctx)
 }
