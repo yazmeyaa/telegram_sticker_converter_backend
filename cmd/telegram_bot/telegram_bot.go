@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"os"
 	"os/signal"
 	"time"
@@ -18,33 +17,28 @@ import (
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/logger"
 )
 
-// debugTransport обёртка для отладки HTTP запросов
-type debugTransport struct {
+// bufferingTransport обёртка которая буферизирует тело запроса
+// чтобы избежать Transfer-Encoding: chunked (локальный Bot API его не поддерживает)
+type bufferingTransport struct {
 	transport http.RoundTripper
 }
 
-func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Логируем запрос
-	reqDump, _ := httputil.DumpRequestOut(req, true)
-	fmt.Printf("=== REQUEST ===\n%s\n", string(reqDump))
+func (b *bufferingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Если есть тело запроса и нет Content-Length, буферизируем его
+	if req.Body != nil && req.ContentLength <= 0 {
+		bodyBytes, err := io.ReadAll(req.Body)
+		req.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
 
-	// Выполняем запрос
-	resp, err := d.transport.RoundTrip(req)
-	if err != nil {
-		fmt.Printf("=== ERROR ===\n%v\n", err)
-		return nil, err
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		req.ContentLength = int64(len(bodyBytes))
+		// Убираем Transfer-Encoding, так как теперь есть Content-Length
+		req.TransferEncoding = nil
 	}
 
-	// Читаем тело ответа для логирования
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	fmt.Printf("=== RESPONSE ===\nStatus: %s\nContent-Length: %d\nBody: %s\n", resp.Status, resp.ContentLength, string(bodyBytes))
-
-	// Восстанавливаем тело ответа
-	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-	return resp, nil
+	return b.transport.RoundTrip(req)
 }
 
 func main() {
@@ -75,9 +69,11 @@ func main() {
 	}
 
 	// Настройка HTTP клиента с увеличенными таймаутами для больших файлов
+	// bufferingTransport нужен чтобы убрать Transfer-Encoding: chunked,
+	// который не поддерживается локальным Telegram Bot API
 	httpClient := &http.Client{
 		Timeout: 10 * time.Minute, // 10 минут для загрузки больших файлов
-		Transport: &debugTransport{
+		Transport: &bufferingTransport{
 			transport: &http.Transport{
 				ResponseHeaderTimeout: 5 * time.Minute,
 				TLSHandshakeTimeout:   30 * time.Second,
