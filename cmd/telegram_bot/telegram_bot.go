@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/signal"
 	"time"
@@ -14,6 +17,35 @@ import (
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/handlers"
 	"github.com/yazmeyaa/telegram_sticker_converter_backend/internal/logger"
 )
+
+// debugTransport обёртка для отладки HTTP запросов
+type debugTransport struct {
+	transport http.RoundTripper
+}
+
+func (d *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Логируем запрос
+	reqDump, _ := httputil.DumpRequestOut(req, true)
+	fmt.Printf("=== REQUEST ===\n%s\n", string(reqDump))
+
+	// Выполняем запрос
+	resp, err := d.transport.RoundTrip(req)
+	if err != nil {
+		fmt.Printf("=== ERROR ===\n%v\n", err)
+		return nil, err
+	}
+
+	// Читаем тело ответа для логирования
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	fmt.Printf("=== RESPONSE ===\nStatus: %s\nContent-Length: %d\nBody: %s\n", resp.Status, resp.ContentLength, string(bodyBytes))
+
+	// Восстанавливаем тело ответа
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	return resp, nil
+}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -45,15 +77,14 @@ func main() {
 	// Настройка HTTP клиента с увеличенными таймаутами для больших файлов
 	httpClient := &http.Client{
 		Timeout: 10 * time.Minute, // 10 минут для загрузки больших файлов
-		Transport: &http.Transport{
-			ResponseHeaderTimeout: 5 * time.Minute,
-			TLSHandshakeTimeout:   30 * time.Second,
-			IdleConnTimeout:       90 * time.Second,
+		Transport: &debugTransport{
+			transport: &http.Transport{
+				ResponseHeaderTimeout: 5 * time.Minute,
+				TLSHandshakeTimeout:   30 * time.Second,
+				IdleConnTimeout:       90 * time.Second,
+			},
 		},
 	}
-
-	// Для отладки - выводим URL который будет использоваться
-	appLogger.Info("Using Telegram API URL", "url", telegramAPIURL)
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(handlers.MessageHandler(rdb, appLogger)),
@@ -61,10 +92,8 @@ func main() {
 		bot.WithCallbackQueryDataHandler("action=frame_select", bot.MatchTypePrefix, handlers.FrameSelectHandler(rdb, appLogger)),
 		bot.WithCallbackQueryDataHandler("action=size_select", bot.MatchTypePrefix, handlers.SizeSelectHandler(rdb, appLogger)),
 		bot.WithServerURL(telegramAPIURL),
-		// Временно убираем кастомный HTTP клиент для отладки
-		// bot.WithHTTPClient(30*time.Second, httpClient),
+		bot.WithHTTPClient(30*time.Second, httpClient), // pollTimeout 30 секунд, HTTP клиент с увеличенными таймаутами
 	}
-	_ = httpClient // чтобы не было ошибки unused variable
 
 	b, err := bot.New(token, opts...)
 	if err != nil {
